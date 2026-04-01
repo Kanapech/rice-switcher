@@ -271,7 +271,8 @@ function cmd_switch
     # Start the new rice
     set -l start_sh "$RICE_BASE/$target/scripts/start.sh"
     if test -x $start_sh
-        setsid bash $start_sh > /dev/null 2>&1
+        nohup bash $start_sh > /dev/null 2>&1 &
+        disown
     end
 
     # ── Step 4: Persist active state ──────────────────────────────────────────
