@@ -113,17 +113,35 @@ function _link
     set -l dst $argv[2]
 
     if not test -e $src
-        echo "  [warn] source missing: $src"
-        return 1
-    end
-    if test -e $dst && not test -L $dst
-        echo "  [warn] $dst exists and is not a symlink — skipping (backup manually)"
+        echo " [warn] source missing: $src"
         return 1
     end
 
+    # If dst exists and is not a symlink
+    if test -e $dst && not test -L $dst
+        if test -d $dst
+            # It's a directory
+            if test -n "(ls -A $dst 2>/dev/null)"
+                echo " [warn] $dst is a non-empty directory — skipping (backup manually)"
+                return 1
+            end
+            rmdir $dst 2>/dev/null
+        else
+            # It's a regular file
+            echo " [warn] $dst exists and is not a symlink — skipping (backup manually)"
+            return 1
+        end
+    end
+
+    # Remove existing symlink if any
+    test -L $dst && rm $dst
+
+    # Create parent directory (works for both files and dirs)
     mkdir -p (dirname $dst)
-    ln -sf $src $dst
-    echo "  [link] "(basename $src)" → $dst"
+
+    # Create symlink (works for both files and dirs)
+    ln -s $src $dst
+    echo " [link] "(basename $src)" → $dst"
 end
 
 function _unlink
