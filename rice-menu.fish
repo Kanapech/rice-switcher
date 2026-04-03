@@ -35,8 +35,8 @@ function rice-menu
         set -a menu_items "$marker $name    $desc"
     end
 
-    # Fuzzel
-    set -l selection (printf '%s\n' $menu_items | fuzzel --dmenu --prompt "🍚 Switch Rice: " --width 50 --lines 10 2>/dev/null)
+    # Rofi
+    set -l selection (printf '%s\n' $menu_items | rofi -dmenu -p "🍚 Switch Rice: " -theme-str 'prompt { enabled: true; }')
     test -z "$selection"; and return 0
 
     # Extract rice name
