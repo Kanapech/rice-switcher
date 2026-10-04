@@ -36,12 +36,13 @@ function rice
 
     # ── Dispatch ───────────────────────────────────────────────────────────
     switch $argv[1]
-        case switch;      cmd_switch  $argv[2]
-        case list ls;     cmd_list
-        case status;      cmd_status
-        case doctor;      cmd_doctor  $argv[2..]
+        case switch; cmd_switch $argv[2]
+        case list ls; cmd_list
+        case status; cmd_status
+        case session; cmd_session $argv[2]
+        case doctor; cmd_doctor $argv[2..]
         case ''
-            echo "Usage: rice [switch <name> | list | status | doctor [name...]]"
+            echo "Usage: rice [switch <name> | session <hyprland|umbriel> | list | status | doctor [name...]]"
         case '*'
             echo "Unknown command: $argv[1]"; return 1
     end
@@ -322,6 +323,7 @@ function cmd_status
     set -l mf      (_manifest $current)
 
     echo "Active rice : $current"
+    echo "Session     : "(grep -h '^Session=' /etc/sddm.conf.d/autologin.conf 2>/dev/null | head -1 | cut -d= -f2 || echo "?")
     echo "Rice base   : $RICE_BASE"
 
     if test -f $mf
@@ -382,5 +384,55 @@ function cmd_doctor
     else
         echo "$total_errors error(s) found."
         return 1
+    end
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
+function cmd_session
+    set -l target $argv[1]
+    if not contains -- $target hyprland umbriel
+        echo "Usage: rice session <hyprland|umbriel>"; return 1
+    end
+
+    # Effective session = /etc/sddm.conf.d wins over /etc/sddm.conf
+    set -l sddm_conf /etc/sddm.conf.d/autologin.conf
+    set -l current (grep -h '^Session=' $sddm_conf 2>/dev/null | head -1 | cut -d= -f2)
+    test -z "$current"; and set current hyprland
+
+    if test "$current" = "$target"
+        echo "Session already set to: $target"; return 0
+    end
+
+    # ── Gate: validate before touching anything ────────────────────────────
+    echo "--> Validating: $target"
+    if not test -f /usr/share/wayland-sessions/$target.desktop
+        echo " [error] /usr/share/wayland-sessions/$target.desktop not found"; return 1
+    end
+    if test $target = umbriel
+        if not command -q start-umbriel
+            echo " [error] start-umbriel not found — install Umbriel first"; return 1
+        end
+        if not umbriel config validate
+            echo " [error] Umbriel config invalid — aborting"; return 1
+        end
+    end
+    echo " [ok]"
+
+    # ── Persist (root-owned SDDM config) ───────────────────────────────────
+    echo "--> Setting SDDM autologin session: $current → $target"
+    sudo sed -i "s/^Session=.*/Session=$target/" $sddm_conf
+    or begin; echo " [error] could not edit $sddm_conf"; return 1; end
+    echo " [ok]"
+
+    echo "==> Session set: $target (SDDM autologs into it at next login/boot)"
+    read -l -P "Log out now? [y/N] " confirm
+    if test "$confirm" = y
+        if test -n "$HYPRLAND_INSTANCE_SIGNATURE"
+            hyprctl dispatch 'hl.dsp.exit()'
+        else if test -n "$UMBRIEL_SOCKET"
+            noctalia msg session logout
+        else
+            loginctl terminate-session $XDG_SESSION_ID
+        end
     end
 end
