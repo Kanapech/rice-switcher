@@ -323,7 +323,7 @@ function cmd_status
     set -l mf      (_manifest $current)
 
     echo "Active rice : $current"
-    echo "Session     : "(grep -h '^Session=' /etc/sddm.conf.d/autologin.conf 2>/dev/null | head -1 | cut -d= -f2 || echo "?")
+    echo "Session     : "(cat /etc/rice/compositor 2>/dev/null || echo hyprland)
     echo "Rice base   : $RICE_BASE"
 
     if test -f $mf
@@ -391,19 +391,25 @@ end
 function cmd_session
     set -l target $argv[1]
     if not contains -- $target hyprland umbriel
-        echo "Usage: rice session <hyprland|umbriel>"; return 1
+        echo "Usage: rice session <hyprland|umbriel>"
+        return 1
     end
 
-    # Effective session = /etc/sddm.conf.d wins over /etc/sddm.conf
-    set -l sddm_conf /etc/sddm.conf.d/autologin.conf
-    set -l current (grep -h '^Session=' $sddm_conf 2>/dev/null | head -1 | cut -d= -f2)
+    # ── Current compositor = the knob the dispatcher reads ────────────────
+    set -l current (cat /etc/rice/compositor 2>/dev/null)
     test -z "$current"; and set current hyprland
+
+    # Sanity: autologin must point at the Rice dispatcher entry
+    set -l sddm_session (grep -h '^Session=' /etc/sddm.conf.d/autologin.conf 2>/dev/null | head -1 | cut -d= -f2)
+    if test "$sddm_session" != rice
+        echo " [warn] autologin Session='$sddm_session' (expected 'rice') — dispatcher not wired?"
+    end
 
     if test "$current" = "$target"
         echo "Session already set to: $target"; return 0
     end
 
-    # ── Gate: validate before touching anything ────────────────────────────
+    # ── Gate: validate before touching anything ───────────────────────────
     echo "--> Validating: $target"
     if not test -f /usr/share/wayland-sessions/$target.desktop
         echo " [error] /usr/share/wayland-sessions/$target.desktop not found"; return 1
@@ -418,13 +424,14 @@ function cmd_session
     end
     echo " [ok]"
 
-    # ── Persist (root-owned SDDM config) ───────────────────────────────────
-    echo "--> Setting SDDM autologin session: $current → $target"
-    sudo sed -i "s/^Session=.*/Session=$target/" $sddm_conf
-    or begin; echo " [error] could not edit $sddm_conf"; return 1; end
+    # ── Persist: single knob, read at session launch ──────────────────────
+    echo "--> Setting compositor: $current → $target"
+    sudo mkdir -p /etc/rice
+    echo $target | sudo tee /etc/rice/compositor >/dev/null
+    or begin; echo " [error] could not write /etc/rice/compositor"; return 1; end
     echo " [ok]"
 
-    echo "==> Session set: $target (SDDM autologs into it at next login/boot)"
+    echo "==> Session set: $target (any 'Rice' login — autologin or greeter — lands in it)"
     read -l -P "Log out now? [y/N] " confirm
     if test "$confirm" = y
         if test -n "$HYPRLAND_INSTANCE_SIGNATURE"
