@@ -190,6 +190,18 @@ function _validate_rice
         end
     end
 
+    # Custom validators: [validate] name = "cmd", run from the rice root
+    set -l checks (dasel query -i toml -o json 'validate' < "$base/manifest.toml" 2>/dev/null \
+        | jq -r 'to_entries[]? | "\(.key)\t\(.value)"')
+    for line in $checks
+        set -l vname (echo $line | cut -f1)
+        set -l vcmd (echo $line | cut -f2)
+        if not bash -c "cd '$base' && $vcmd" >/dev/null 2>&1
+            echo " [error] validate.$vname failed: $vcmd"
+            set errors (math $errors + 1)
+        end
+    end
+
     # Inherit target exists
     set -l inherit (_get_inherit $name)
     if test -n "$inherit" && not _rice_exists $inherit
