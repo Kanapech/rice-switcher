@@ -174,8 +174,7 @@ function _validate_rice
     # Scripts
     for script in start.sh stop.sh
         if not test -f "$base/scripts/$script"
-            echo "  [error] scripts/$script missing"
-            set errors (math $errors + 1)
+            echo " [warn] scripts/$script not defined (no lifecycle hooks for this rice)"
         else if not test -x "$base/scripts/$script"
             echo "  [error] scripts/$script not executable  (fix: chmod +x)"
             set errors (math $errors + 1)
