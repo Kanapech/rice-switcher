@@ -4,6 +4,12 @@
 
 A **declarative, atomic rice switcher** for Hyprland and Wayland desktop environments. Built on `chezmoi` for dotfile management and `dasel` for TOML parsing.
 
+Two orthogonal dimensions:
+
+- **rice** — the shell stack (bar, notifications, launcher, lock…), switched
+  **live** via validated symlinks + lifecycle hooks.
+- **session** — the compositor (`hyprland` | `umbriel`), applied at the
+  **next login** via an SDDM dispatcher entry.
 ---
 
 ## ✨ Features
@@ -21,11 +27,12 @@ A **declarative, atomic rice switcher** for Hyprland and Wayland desktop environ
 ## 📦 Requirements
 
 | Dependency | Purpose |
-|------------|---------|
+|---|---|
 | `fish` | Shell runtime |
 | `dasel` | TOML/JSON parsing |
 | `jq` | JSON processing |
 | `chezmoi` | Dotfile deployment |
+| `sudo` | `session` command only |
 
 ---
 
@@ -72,6 +79,7 @@ rice [command] [arguments]
 
 Commands:
   switch <name>    Switch to a rice (validates first)
+  session \<hyprland|umbriel>    Set compositor for next login/boot
   list, ls         List all available rices
   status           Show active rice and symlink health
   doctor [name...] Validate one or more rices (all if no args)
@@ -168,7 +176,10 @@ version = "1.0.0"
 [inherit]
 base = "default"
 
-# ── Scripts (required) ────────────────────────────────────────────────────
+[validate] # optional — run from the rice root,
+lua = "luac -p hypr/*.lua" # nonzero exit = doctor error
+
+# ── Scripts (optional) ────────────────────────────────────────────────────
 # Must be executable (chmod +x)
 # Must be idempotent (safe to run multiple times)
 
@@ -177,7 +188,54 @@ start = "scripts/start.sh"
 stop = "scripts/stop.sh"
 ```
 
+### Scripts are optional
+
+`scripts/start.sh` and `scripts/stop.sh`, if present (and executable), run on
+switch and at boot; absent scripts are skipped. `doctor` warns on missing,
+**errors** on present-but-not-executable.
+
+### Ownership — the one rule
+
+| File                       | Owns                                                                                                                                        |
+| :------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------ |
+| `start.sh` / `stop.sh`     | rice **processes** (noctalia, waybar, hypridle…) — single owner, runs at boot AND on live switch → must be **idempotent** ( `pgrep` guards) |
+| `hypr/execs.lua`           | Hyprland **session concerns** only: keyring, D-Bus env, cursor, boot lock                                                                   |
+| `umbriel/lock-at-start.sh` | Umbriel boot lock                                                                                                                           |
+
+Rules for the scripts:
+
+- Gate compositor-specific parts on `$HYPRLAND_INSTANCE_SIGNATURE`
+  (e.g. `hypridle` is Hyprland-only).
+- `stop.sh` must **not return until processes are gone** (bounded poll,
+  then SIGKILL) — the next rice's `pgrep` guards must not see a dying process.
+- **Never kill lockers** in stop scripts (remote-access machine).
+- Deliberately not killed: `easyeffects`, `gnome-keyring`, `sunshine` (shared / lifeline).
+
+Boot path per compositor (both templates bake `{{ .rice.active }}` from
+`.chezmoidata.toml`, which `rice switch` rewrites before `chezmoi apply`):
+
+- Hyprland: `hyprland.lua.tmpl` start hook → active rice's `start.sh`
+- Umbriel: `config.toml.tmpl` `autostart` → active rice's `start.sh`
 ---
+
+## 🔀 Session Switching
+
+- /etc/rice/compositor ← knob, written by `rice session`
+- /usr/local/share/wayland-sessions/rice.desktop
+- /usr/local/bin/rice-session-launch ← reads knob, execs the compositor
+- SDDM autologin: Session=rice ← constant, never changes
+
+Boot autologin and manual greeter logins both route through the dispatcher,
+so they can never disagree. Pick **Rice** once at the greeter; SDDM remembers
+it ( `LastSession`).
+
+**Adding a compositor** = one `case` arm in `rice-session-launch` + one name
+in `cmd_session`'s whitelist.
+
+**Emergency recovery (SSH):**
+```plain
+echo hyprland | sudo tee /etc/rice/compositor
+```
 
 ## 📁 Directory Structure
 
@@ -280,6 +338,12 @@ stop = "scripts/stop.sh"
 │  5. PERSIST                                                         │
 │     • Write rice name to ~/.config/rice-switcher/active            │
 │     • Done ✓                                                        │
+└─────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ 6. LIVE-APPLY                                                     │
+│ • hyprctl reload (Hyprland) — binds/rules/colors from the new rice │
+│   (guarded by $HYPRLAND_INSTANCE_SIGNATURE; skipped under Umbriel)│
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -412,6 +476,16 @@ rice status
 chezmoi apply
 rice switch default
 ```
+
+### Wrong compositor at the greeter
+
+You logged into a remembered session entry instead of **Rice** — check
+`journalctl -b -u sddm` ( `Reading from "..."` line shows what launched).
+
+### Config errors after a live switch
+
+Run `hyprctl configerrors` (Hyprland). Umbriel keeps the last working config
+on a bad reload and shows an on-screen panel.
 
 ---
 
